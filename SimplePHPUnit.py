@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import shlex
 import subprocess
@@ -11,6 +12,17 @@ if sys.version_info < (3, 3):
 SPU_THEME = 'Packages/SimplePHPUnit/SimplePHPUnit.hidden-tmTheme'
 SPU_SYNTAX = 'Packages/SimplePHPUnit/SimplePHPUnit.hidden-tmLanguage'
 
+
+class NoOpenProjectException(Exception):
+    pass
+
+class InvalidFileTypeException(Exception):
+    pass
+
+class NoActiveFileException(Exception):
+    pass
+
+
 class ShowInPanel:
     def __init__(self, window):
         self.window = window
@@ -22,40 +34,66 @@ class ShowInPanel:
         self.panel.settings().set("color_scheme", SPU_THEME)
         self.panel.set_syntax_file(SPU_SYNTAX)
 
+
 class SimplePhpUnitCommand(sublime_plugin.WindowCommand):
     def __init__(self, *args, **kwargs):
         super(SimplePhpUnitCommand, self).__init__(*args, **kwargs)
         settings = sublime.load_settings('SimplePHPUnit.sublime-settings')
-        self.phpunit_path = settings.get('phpunit_path')
+        self.phpunit_executable = settings.get('phpunit_executable')
+        self.xml_config_file = settings.get('phpunit_xml_config_file')
 
     def run(self, *args, **kwargs):
         try:
-            # The first folder needs to be the Laravel Project
+            self.build_and_run_phpunit_command(args, kwargs)
+        except (IOError, NoOpenProjectException, InvalidFileTypeException, NoActiveFileException) as e:
+            sublime.status_message(str(e))
+            
+
+    def build_and_run_phpunit_command(self, args, kwargs):
+            self.ensure_open_project()
+            self.reset_command_args()
+            self.file_to_test = None
+
+            if kwargs.get('custom_args') is True:
+                self.window.show_input_panel('PHPUnit Arguments:', '', self.set_custom_arguments_and_run_phpunit, None, None)
+                return
+
+            if kwargs.get('test_current_file'):
+                current_filename = self.window.active_view().file_name()
+                if current_filename is None:
+                    raise NoActiveFileException('A file must be open in the editor to run PHPUnit on the current file')
+                if current_filename.endswith('.php') is False:
+                    raise InvalidFileTypeException('PHPUnit can only be run on PHP files')
+                self.file_to_test = current_filename
+                
+            self.run_phpunit()
+
+    def reset_command_args(self):
+        self.args = [self.phpunit_executable, '--stderr']
+        if self.xml_config_file and os.path.isfile(self.xml_config_file):
+            self.args += ['--config', self.xml_config_file]
+
+    def ensure_open_project(self):
+        try:
             self.PROJECT_PATH = self.window.folders()[0]
-            if os.path.isfile("%s" % os.path.join(self.PROJECT_PATH, 'phpunit.xml')) or os.path.isfile("%s" % os.path.join(self.PROJECT_PATH, 'phpunit.xml.dist')):
-                self.params = kwargs.get('params', False)
-                self.args = [self.phpunit_path, '--stderr']
-                if self.params is True:
-                    self.window.show_input_panel('Params:', '', self.on_params, None, None)
-                else:
-                    self.on_done()
-            else:
-                sublime.status_message("phpunit.xml or phpunit.xml.dist not found")
         except IndexError:
-            sublime.status_message("Please open a project with PHPUnit")
+            raise NoOpenProjectException("PHPUnit must be run from an open Sublime project")
 
-    def on_params(self, command):
-        self.command = command
-        self.args.extend(shlex.split(str(self.command)))
-        self.on_done()
+    def set_custom_arguments_and_run_phpunit(self, command):
+        self.args.extend(shlex.split(str(command)))
+        self.run_phpunit()
 
-    def on_done(self):
+    def run_phpunit(self):
+        if self.file_to_test:
+            self.args.append(self.file_to_test)
+
         if os.name != 'posix':
             self.args = subprocess.list2cmdline(self.args)
+
         try:
             self.run_shell_command(self.args, self.PROJECT_PATH)
         except IOError:
-            sublime.status_message('IOError - command aborted')
+            raise IOError('IOError - PHPUnit command aborted')
 
     def run_shell_command(self, command, working_dir):
             self.window.run_command("exec", {
@@ -64,7 +102,6 @@ class SimplePhpUnitCommand(sublime_plugin.WindowCommand):
                 "working_dir": working_dir
             })
             self.display_results()
-            return True
 
     def display_results(self):
         display = ShowInPanel(self.window)
