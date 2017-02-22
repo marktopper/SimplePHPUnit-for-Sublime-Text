@@ -4,10 +4,17 @@
         "command": "simple_php_unit"
     },
     {
-        "caption": "PHPUnit: Run with params",
+        "caption": "PHPUnit: Test current file",
         "command": "simple_php_unit",
         "args": {
-            "params": true
+            "test_current_file": true
+        }
+    },
+    {
+        "caption": "PHPUnit: Run with custom args",
+        "command": "simple_php_unit",
+        "args": {
+            "custom_args": true
         }
     }
 ]
